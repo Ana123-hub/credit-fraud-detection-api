@@ -1,0 +1,20 @@
+paths:
+  raw_data: "data/creditcard.csv"
+  processed_dir: "data/processed"
+  models_dir: "models"
+  model_filename: "random_forest_f2.joblib"
+  scaler_filename: "robust_scaler.joblib"
+
+data_prep:
+  test_size: 0.20
+  random_state: 42
+
+model_params:
+  n_estimators: 250
+  max_depth: 12
+  min_samples_leaf: 5
+  class_weight: "balanced_subsample"
+  random_state: 42
+
+evaluation:
+  target_metric: "F2"

@@ -1,0 +1,54 @@
+# For python and virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Machine learning and model artifacts
+# Ignore joblib / pickle / model weights everywhere
+*.joblib
+*.pkl
+*.h5
+*.onnx
+*.pt
+*.pth
+
+# Keep data structure but ignore local CSVs/Parquet datasets
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+models/*
+!models/.gitkeep
+
+# Testing and coverage Caches
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# Environment variables and IDE Configuration
+.env
+.env.local
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS Generated Files
+.DS_Store
+Thumbs.db
