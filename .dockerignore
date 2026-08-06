@@ -9,10 +9,7 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
-data/raw/
 tests/
-*.joblib
-*.pkl
 .vscode/
 .idea/
 README.md

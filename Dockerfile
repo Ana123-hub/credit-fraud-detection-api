@@ -33,6 +33,10 @@ COPY src/ ./src/
 COPY data/processed/ ./data/processed/
 COPY models/ ./models/
 
+COPY src/ /app/src/
+COPY data/processed/robust_scaler.joblib /app/robust_scaler.joblib
+COPY models/random_forest_f2.joblib /app/random_forest_f2.joblib
+
 # Ensure non-root user owns the app directory
 RUN chown -R appuser:appuser /app
 

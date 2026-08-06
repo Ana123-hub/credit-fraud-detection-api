@@ -26,12 +26,13 @@ eggs/
 *.pth
 
 # Keep data structure but ignore local CSVs/Parquet datasets
-data/raw/*
+data/*
 !data/raw/.gitkeep
 data/processed/*
 !data/processed/.gitkeep
 models/*
 !models/.gitkeep
+.csv
 
 # Testing and coverage Caches
 .pytest_cache/
