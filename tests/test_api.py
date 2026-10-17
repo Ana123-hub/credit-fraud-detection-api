@@ -8,15 +8,11 @@ from src.main import app
 
 @pytest.fixture
 def valid_transaction_payload():
-    payload = {
+    return {
         "Time": 86400.0,
         "Amount": 149.99,
+        **{f"V{i}": 0.0 for i in range(1, 29)},
     }
-    # Populate V1 through V28
-    for i in range(1, 29):
-        payload[f"V{i}"] = -0.5
-    return payload
-
 
 class TestFastAPIEndpoints:
 
@@ -34,3 +30,12 @@ class TestFastAPIEndpoints:
             assert "is_fraud" in data
             assert "fraud_probability" in data
             assert "status" in data
+
+    def test_predict_rejects_missing_feature(self, valid_transaction_payload):
+        payload = valid_transaction_payload.copy()
+        payload.pop("V28")
+
+        with TestClient(app) as client:
+            response = client.post("/predict", json=payload)
+
+        assert response.status_code == 422

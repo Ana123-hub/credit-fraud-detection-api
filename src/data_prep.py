@@ -22,9 +22,8 @@ def prepare_data():
     # Resolve Paths & Config Params
     raw_data_path = CONFIG["paths"]["raw_data"]
     processed_dir = CONFIG["paths"]["processed_dir"]
-    scaler_path = os.path.join(CONFIG["paths"]["processed_dir"], CONFIG["paths"]["scaler_filename"])
+    scaler_path = os.path.join(processed_dir, CONFIG["paths"]["scaler_filename"])
 
-    os.makedirs(os.path.dirname(scaler_path), exist_ok=True)
     test_size = CONFIG["data_prep"]["test_size"]
     random_state = CONFIG["data_prep"]["random_state"]
 

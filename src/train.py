@@ -6,8 +6,8 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import (
-    classification_report, 
-    confusion_matrix, 
+    classification_report,
+    confusion_matrix,
     precision_recall_curve,
     average_precision_score
 )
@@ -21,14 +21,21 @@ from src.config_loader import CONFIG
 
 def train_model():
     """
-    Loads preprocessed datasets from configured directories, tunes the decision threshold 
-    via 5-Fold Stratified CV, fits the final Random Forest model using configured hyperparameters, 
+    Loads preprocessed datasets from configured directories, tunes the decision threshold
+    via 5-Fold Stratified CV, fits the final Random Forest model using configured hyperparameters,
     and saves the model bundle to the target models directory.
     """
     # Resolve Paths & Configuration Options
     processed_dir = CONFIG["paths"]["processed_dir"]
     models_dir = CONFIG["paths"]["models_dir"]
-    model_save_path = os.path.join(CONFIG["paths"]["models_dir"], CONFIG["paths"]["model_filename"])
+    model_save_path = os.path.join(models_dir, CONFIG["paths"]["model_filename"])
+
+    scaler_path = os.path.join(processed_dir, CONFIG["paths"]["scaler_filename"])
+    if not os.path.isfile(scaler_path):
+        raise FileNotFoundError(f"Scaler file not found at: {scaler_path}. "
+                                "Run data preparation before training.")
+    scaler = joblib.load(scaler_path)
+
     # Make sure directory exists before saving
     os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
 
@@ -75,7 +82,11 @@ def train_model():
 
     # Calculate optimal F2 threshold on Out-Of-Fold (OOF) probabilities
     precisions, recalls, thresholds = precision_recall_curve(y_train, oof_probs)
-    f2_scores = (5 * precisions * recalls) / (4 * precisions + recalls + 1e-10)
+    precisions = precisions[:-1]
+    recalls = recalls[:-1]
+
+    f2_scores = (5 * precisions * recalls / (4 * precisions + recalls + 1e-10))
+
     best_f2_idx = np.argmax(f2_scores)
     optimal_threshold = float(thresholds[best_f2_idx])
 
@@ -116,6 +127,7 @@ def train_model():
 
     model_bundle = {
         "model": final_rf,
+        "scaler": scaler,
         "optimal_threshold": optimal_threshold,
         "feature_names": list(X_train.columns),
         "holdout_pr_auc": holdout_pr_auc,

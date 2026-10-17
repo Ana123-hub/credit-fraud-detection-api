@@ -10,21 +10,20 @@ from src.predict import FraudPredictor
 
 @pytest.fixture(scope="module")
 def predictor():
-    """Instantiates the FraudPredictor once using configured paths."""
-    scaler_path = os.path.join(
-        CONFIG["paths"]["processed_dir"], CONFIG["paths"]["scaler_filename"]
-    )
+    """Load the predictor using the configured model bundle."""
     model_path = os.path.join(
-        CONFIG["paths"]["models_dir"], CONFIG["paths"]["model_filename"]
+        CONFIG["paths"]["models_dir"],
+        CONFIG["paths"]["model_filename"],
     )
 
-    if not os.path.exists(scaler_path) or not os.path.exists(model_path):
+    if not os.path.isfile(model_path):
         pytest.fail(
-            "Model or Scaler artifacts missing! "
-            "Please run 'python -m src.data_prep' and 'python -m src.train' first."
+            f"Model bundle not found at {model_path}. "
+            "Run data preparation and training first."
         )
 
-    return FraudPredictor(scaler_path=scaler_path, model_path=model_path)
+    return FraudPredictor(model_path=model_path)
+
 
 
 class TestFraudPredictor:

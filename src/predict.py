@@ -15,55 +15,66 @@ class FraudPredictor:
     Handles raw incoming payloads, feature engineering, scaling, and threshold decision.
     """
 
-    def __init__(self, scaler_path: str = None, model_path: str = None):
-        # Resolve artifact paths from config if not provided
-        if scaler_path is None:
-            scaler_path = os.path.join(
-                CONFIG["paths"]["processed_dir"], CONFIG["paths"]["scaler_filename"]
-            )
+    def __init__(self, model_path: str = None):
+        # Resolve model bundle paths from config if not supplied
         if model_path is None:
             model_path = os.path.join(
                 CONFIG["paths"]["models_dir"], CONFIG["paths"]["model_filename"]
             )
-
-        # Validate existence of model artifacts
-        if not os.path.exists(scaler_path):
-            raise FileNotFoundError(f"Scaler file not found at: {scaler_path}")
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Model file not found at: {model_path}")
-
-        # Load artifacts
-        self.scaler = joblib.load(scaler_path)
-        
-        # Support both raw model objects and dict bundles containing optimal_threshold
+        if not os.path.isfile(model_path):
+            raise FileNotFoundError(
+                f"Model bundle not found at: {model_path}"
+            )
         model_bundle = joblib.load(model_path)
-        if isinstance(model_bundle, dict):
-            self.model = model_bundle.get("model")
-            self.decision_threshold = model_bundle.get("optimal_threshold", 0.5)
-        else:
-            self.model = model_bundle
-            self.decision_threshold = getattr(CONFIG, "optimal_threshold", 0.5)
 
-        # Retrieve required model feature names if available, else standard feature list
+        if not isinstance(model_bundle, dict):
+            raise ValueError("Expected a model bundle containing the model, scaler, "
+                             "decision threshold and feature names. Retrain the model."
+            )
+
+        required_keys = {
+            "model",
+            "scaler",
+            "optimal_threshold",
+            "feature_names",
+        }
+
+        missing_keys = required_keys - model_bundle.keys()
+        if missing_keys:
+            raise ValueError(f"Model bundle is missing required keys: "
+                             f"{sorted(missing_keys)}. Retrain the model."
+            )
+
+        self.model = model_bundle["model"]
+        self.scaler = model_bundle["scaler"]
+        self.decision_threshold = float(model_bundle["optimal_threshold"])
+
+        self.feature_names = list(model_bundle["feature_names"])
+        if not 0 <= self.decision_threshold <= 1:
+            raise ValueError("Decision threshold must be between 0 and 1.")
+
+        # Ensure recorded feature order matches the fitted model.
         if hasattr(self.model, "feature_names_in_"):
-            self.feature_names = list(self.model.feature_names_in_)
-        else:
-            v_cols = [f"V{i}" for i in range(1, 29)]
-            self.feature_names = v_cols + ["hour_sin", "hour_cos", "scaled_amount"]
+            model_features = list(self.model.feature_names_in_)
+
+            if model_features != self.feature_names:
+                raise ValueError(
+                "Bundle feature names do not match the model's expected feature names and order."
+                )
 
     def preprocess_payload(self, raw_dict: Dict[str, Any]) -> pd.DataFrame:
+        required_features = (
+            {"Time", "Amount"}
+            | {f"V{i}" for i in range(1, 29)}
+        )
+        missing_features = required_features - raw_dict.keys()
+        if missing_features:
+            raise ValueError("Transaction payload is missing required features: "
+                             f"{sorted(missing_features)}"
+            )
         df = pd.DataFrame([raw_dict])
 
-        # Fill missing V1..V28 with default 0.0 if omitted in light payloads
-        for i in range(1, 29):
-            col = f"V{i}"
-            if col not in df.columns:
-                df[col] = 0.0
-
-        if "Time" not in df.columns or "Amount" not in df.columns:
-            raise KeyError("Payload must include 'Time' and 'Amount' fields.")
-
-        # Cyclical Time Encoding
+        # Cyclical Time encoding
         hours = (df["Time"] / 3600.0) % 24
         df["hour_sin"] = np.sin(2 * np.pi * hours / 24.0)
         df["hour_cos"] = np.cos(2 * np.pi * hours / 24.0)
