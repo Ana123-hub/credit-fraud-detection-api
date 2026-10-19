@@ -39,3 +39,17 @@ class TestFastAPIEndpoints:
             response = client.post("/predict", json=payload)
 
         assert response.status_code == 422
+
+    def test_readiness_check_endpoint(self):
+        with TestClient(app) as client:
+            response = client.get("/ready")
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "ready"
+
+    def test_readiness_fails_when_predictor_unavailable(self, monkeypatch):
+        with TestClient(app) as client:
+            monkeypatch.setattr(app.state, "predictor", None)
+            response = client.get("/ready")
+
+        assert response.status_code == 503

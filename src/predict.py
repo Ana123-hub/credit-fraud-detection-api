@@ -4,6 +4,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from typing import Dict, Any
+from sklearn.preprocessing import RobustScaler
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.config_loader import CONFIG
@@ -50,17 +51,33 @@ class FraudPredictor:
         self.decision_threshold = float(model_bundle["optimal_threshold"])
 
         self.feature_names = list(model_bundle["feature_names"])
-        if not 0 <= self.decision_threshold <= 1:
+        if not 0.0 <= self.decision_threshold <= 1.0:
             raise ValueError("Decision threshold must be between 0 and 1.")
 
-        # Ensure recorded feature order matches the fitted model.
-        if hasattr(self.model, "feature_names_in_"):
-            model_features = list(self.model.feature_names_in_)
+        # Verify that the loaded artifacts match this pipeline.
+        if not isinstance(self.scaler, RobustScaler):
+            raise ValueError("Model bundle must contain a fitted RobustScaler.")
+        if not callable(getattr(self.model, "predict_proba", None)):
+            raise ValueError("Model bundle estimator must support predict_proba().")
 
-            if model_features != self.feature_names:
-                raise ValueError(
-                "Bundle feature names do not match the model's expected feature names and order."
-                )
+        # Expected features after feature engineering and scaling.
+        expected_features = (
+            [f"V{i}" for i in range(1, 29)]
+            + ["hour_sin", "hour_cos", "scaled_amount"]
+        )
+        if self.feature_names != expected_features:
+            raise ValueError("Model bundle feature schema does not match the expected fraud-detection input schema.")
+
+        if getattr(self.scaler, "n_features_in_", None) != 1:
+            raise ValueError("The fitted scaler must expect exactly one input feature.")
+
+        # Check feature ordering when supported by the estimator.
+        model_features = getattr(self.model, "feature_names_in_", None)
+
+        if model_features is not None:
+            if list(model_features) != self.feature_names:
+                raise ValueError("Bundle feature names do not match the model's "
+                                 "expected feature names and order.")
 
     def preprocess_payload(self, raw_dict: Dict[str, Any]) -> pd.DataFrame:
         required_features = (

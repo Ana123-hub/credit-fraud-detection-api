@@ -4,6 +4,7 @@ import pytest
 import numpy as np
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from src import predict as predict_module
 from src.config_loader import CONFIG
 from src.predict import FraudPredictor
 
@@ -67,3 +68,32 @@ class TestFraudPredictor:
 
         with pytest.raises((KeyError, ValueError)):
             predictor.predict(incomplete_payload)
+
+    def test_predictor_rejects_incomplete_model_bundle(self, tmp_path, monkeypatch):
+        """Ensure initialization rejects a malformed model bundle."""
+        model_dir = tmp_path / "models"
+        model_dir.mkdir()
+
+        model_filename = "broken_bundle.joblib"
+        model_path = model_dir / model_filename
+        model_path.write_bytes(b"placeholder")
+
+        monkeypatch.setitem(
+            predict_module.CONFIG["paths"],
+            "models_dir",
+            str(model_dir),
+        )
+        monkeypatch.setitem(
+            predict_module.CONFIG["paths"],
+            "model_filename",
+            model_filename,
+        )
+
+        monkeypatch.setattr(
+            predict_module.joblib,
+            "load",
+            lambda _: {"model": object()},
+        )
+
+        with pytest.raises(ValueError):
+            predict_module.FraudPredictor()

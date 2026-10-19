@@ -67,7 +67,17 @@ app = FastAPI(
 )
 
 @app.get("/health")
-def health(request: Request):
+def health_check():
+    """Liveness check: the API process is responding."""
+    return {
+        "status": "ok",
+        "service": "fraud-detection-api",
+    }
+
+
+@app.get("/ready")
+def readiness_check(request: Request):
+    """Readiness check: the predictor is available for inference."""
     predictor = getattr(request.app.state, "predictor", None)
 
     if predictor is None:
@@ -77,9 +87,10 @@ def health(request: Request):
         )
 
     return {
-        "status": "ok",
+        "status": "ready",
         "service": "fraud-detection-api",
     }
+
 
 @app.post("/predict", response_model=PredictionResponse)
 def predict(
