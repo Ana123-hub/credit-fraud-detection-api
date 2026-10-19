@@ -1,195 +1,226 @@
-# Credit Card Fraud Detection Pipeline and API
+# Credit Card Fraud Detection API
 
-An end-to-end, production-ready machine learning system built with scikit-learn and FastAPI to detect high-risk, fraudulent financial transactions in real time. This project showcases the evolution of a production pipeline, from raw data cleaning and cyclical feature engineering to cost-sensitive threshold optimization, rigorous test suites, and containerized microservice deployment with Docker.
+An end-to-end machine-learning project for credit-card fraud classification. It includes a configurable preprocessing and training pipeline, a Random Forest model with an F2-optimized decision threshold, a validated FastAPI inference service, automated tests, and a multi-stage Docker image.
 
-# Architecture and Production Stack
+The project focuses on the engineering surrounding an ML model: reproducible configuration, train-only preprocessing, a single model bundle, input validation, health/readiness checks, and containerized inference.
+
+## What it does
+
+- Removes duplicate rows and performs a stratified train/test split.
+- Encodes the transaction `Time` feature cyclically with sine and cosine features.
+- Fits a `RobustScaler` to the training split's `Amount` values and applies that fitted scaler to the test split.
+- Trains a Random Forest classifier using `class_weight="balanced_subsample"` to account for class imbalance without synthetic oversampling.
+- Uses out-of-fold probabilities from stratified cross-validation to select a decision threshold by F2 score, which weights recall more heavily than precision.
+- Saves the estimator, fitted scaler, threshold, expected feature names, holdout PR-AUC, and configuration snapshot in a single model bundle.
+- Serves predictions through FastAPI and packages the inference service in Docker.
+
+## Project structure
 
 ```text
 Credit_Fraud/
+├── config.yaml                 # Data, model and path configuration
+├── requirements-runtime.txt    # Pinned runtime dependencies
+├── pyproject.toml              # Package metadata and development/test setup
+├── Dockerfile                  # Multi-stage image build and health check
+├── .dockerignore
 ├── data/
-│   ├── raw/                  # Raw creditcard.csv transaction dataset
-│   └── processed/            # Serialized feature processing artifacts
-├── models/                   # Serialized model artifacts & scalers
-│   └── random_forest_f2.joblib
+│   ├── creditcard.csv          # Source dataset (provided separately)
+│   └── processed/              # Generated train/test data and scaler
+├── models/
+│   └── random_forest_f2.joblib # Trained model bundle used by inference
 ├── src/
-│   ├── main.py               # FastAPI application server & endpoint handlers
-│   ├── predict.py            # Feature transformation & inference pipeline
-│   ├── data_prep.py          # Data cleaning, scaling & feature transformers
-│   ├── train.py              # Model training & validation pipeline
-│   └── config_loader.py      # Environment & system configurations
-├── tests/                    # Automated unit & integration test suite
-│   ├── test_api.py           # FastAPI endpoint tests
-│   ├── test_predict.py       # Inference pipeline tests
-│   └── test_data_prep.py     # Data transformation & feature engineering unit tests
-├── Dockerfile                # Multi-stage container blueprint (Python 3.11-slim)
-├── docker-compose.yml        # Multi-container orchestration spec
-├── config.yaml               # System parameters & path configurations
-├── pyproject.toml            # Project dependencies & build metadata
-└── README.md
+│   ├── config_loader.py        # Loads and resolves project configuration
+│   ├── data_prep.py            # Cleans, splits and transforms the dataset
+│   ├── train.py                # Cross-validation, threshold selection and training
+│   ├── predict.py              # Bundle validation, preprocessing and inference
+│   └── main.py                 # FastAPI application and HTTP endpoints
+└── tests/
+    ├── test_api.py
+    ├── test_data_prep.py
+    └── test_predict.py
 ```
 
-* API Engine: FastAPI + Uvicorn
-* Testing Suite: Pytest + HTTPX
-* Model Runtime: Python 3.11-slim container environment
-* ML Stack: Scikit-learn, Pandas, NumPy, Joblib
-* Containerization: Docker Desktop + Docker Compose
+Generated data under `data/` is not required inside the inference container. The container uses the saved bundle in `models/` and the application configuration.
 
-## Multi-Model Performance Summary
+## Dataset
 
-All models were evaluated on a **5-Fold Cross-Validation** setup on $80\%$ training data and validated on a strict **20% Stratified Holdout Test Set** ($56,746$ total transactions: $56,651$ Legit, $95$ Fraud). Models were optimized using **Precision-Recall AUC (PR-AUC)**, **Fraud Recall**, and **Decision Threshold Tuning** ($F_1$ vs. $F_2$).
+The pipeline expects a CSV with the target column `Class`, transaction time `Time`, amount `Amount`, and anonymized features `V1` through `V28`. `Class` is the label (`0` for legitimate and `1` for fraud) and is removed from the model input features.
 
-| Model Architecture | 5-Fold Mean CV PR-AUC | Holdout Test PR-AUC | Optimal Threshold ($\tau$) | Metric Optimized | Precision (Fraud) | Recall (Fraud) | $F_1$ Score | True Positives (Caught) | False Negatives (Missed) | False Positives (Alarms) |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Random Forest ($F_2$-Tuned)** | **0.8311** | **0.7965** | **$\tau = 0.3274$** | **$F_2$ Score** | **0.81** | **0.79** | **0.80** | **75 / 95** | **20** | **18** |
-| **Random Forest ($F_1$-Tuned)** | 0.8311 | 0.7965 | $\tau = 0.5444$ | $F_1$ Score | 0.93 | 0.74 | 0.82 | 70 / 95 | 25 | 5 |
-| **CatBoost Classifier** | 0.7357 | 0.8019 | $\tau = 0.7814$ | $F_2$ Score | 0.90 | 0.78 | 0.84 | 74 / 95 | 21 | 8 |
-| **AdaBoost Classifier** | 0.7296 | 0.7008 | $\tau = 0.8262$ | $F_2$ Score | 0.83 | 0.72 | 0.77 | 68 / 95 | 27 | 14 |
-| **LightGBM Classifier** | 0.4473 | 0.6016 | Baseline | Standard | — | — | — | — | — | — |
+Place the dataset at the path configured by `paths.raw_data` in `config.yaml`. The default project path is `data/creditcard.csv`. The raw dataset is not bundled into the Docker image; obtain it separately and comply with the dataset provider's terms.
 
----
+## Environment setup
 
-## Detailed Model Breakdown & Execution Logs
+The project is configured for Python `>=3.14,<3.15`. Use a compatible Python 3.14 installation.
 
-### 1. Random Forest Classifier (Selected for Production)
-* **Cross-Validation:** **Mean CV PR-AUC: 0.8311** (Folds: `0.8383`, `0.8555`, `0.7638`, `0.8494`, `0.8486`)
-* **Holdout Test PR-AUC:** `0.7965`
-* **Threshold Tradeoff Analysis:**
-  * **$F_1$-Optimized ($\tau = 0.5444$):** High Precision (`0.93`), but missed **25 fraudulent transactions** (Recall: `0.74`).
-  * **$F_2$-Optimized ($\tau = 0.3274$):** Lowered threshold to prioritize catching fraud. Reduced False Negatives from **25 down to 20** (Recall: `0.79`), catching **75 out of 95 fraud cases** with only 18 false alarms out of 56,651 legitimate transactions.
+### Windows PowerShell
 
-```text
---- Random Forest Confusion Matrix (F2 Threshold = 0.3274) ---
-True Negatives:  56,633 | False Positives: 18
-False Negatives:     20 | True Positives:  75
-```
-### 2. CatBoost Classifier
-* Cross-Validation: Mean CV PR-AUC: 0.7357 (Folds: 0.7891, 0.7523, 0.6566, 0.7113, 0.7694)
-* Holdout Test PR-AUC: 0.8019
-* Performance at $F_2$ Threshold ($\tau = 0.7814$): Achieved 0.90 Precision and 0.78 Recall ($F_1 = 0.84$), catching 74 out of 95 fraud cases with only 8 false positives.
+From the project root:
 
-```text
---- CatBoost Confusion Matrix (F2 Threshold = 0.7814) ---
-True Negatives:  56,643 | False Positives: 8
-False Negatives:     21 | True Positives:  74
-```
-### 3. AdaBoost Classifier
-* Cross-Validation: Mean CV PR-AUC: 0.7296 (Folds: 0.7284, 0.7506, 0.6897, 0.7229, 0.7565)
-* Holdout Test PR-AUC: 0.7008
-* Performance at $F_2$ Threshold ($\tau = 0.8262$): Achieved 0.83 Precision and 0.72 Recall ($F_1 = 0.77$), leaving 27 missed frauds (False Negatives).
-
-```text
---- AdaBoost Confusion Matrix (F2 Threshold = 0.8262) ---
-True Negatives:  56,637 | False Positives: 14
-False Negatives:     27 | True Positives:  68
-```
-### 4. LightGBM Classifier
-* Cross-Validation: Mean CV PR-AUC: 0.4473 (Folds: 0.4246, 0.4364, 0.3149, 0.4701, 0.5903)
-* Holdout Test PR-AUC: 0.6016
-* Takeaway: LightGBM suffered severe instability across folds without deep hyperparameter tuning, making it unsuitable for deployment compared to Random Forest or CatBoost.
-
-
-## Technical Decisions & Modeling Rationale
-
-### 1. Exclusion of SMOTE (Synthetic Minority Over-sampling Technique)
-While SMOTE is standard for imbalanced classification, it was intentionally omitted in favor of algorithmic cost-sensitive learning (`class_weight="balanced_subsample"`) for three primary production reasons:
-
-* **Inference Data Leakage & Manifold Distortion:** SMOTE creates synthetic instances along linear segments connecting $k$-nearest neighbors. In high-dimensional, PCA-transformed spaces ($V_1$–$V_28$), generating synthetic fraud instances distorts the natural decision boundaries, causing artificial feature overlaps and elevating False Positive rates on unseen live data.
-* **Preservation of Real-World Data Distribution:** Modern tree ensembles handle class imbalance natively during node splits by weighing empirical loss based on class frequencies. Retaining the true class ratio ($0.172\%$ fraud) ensures that the probability calibration of the model outputs aligns with live operational distributions.
-* **Latency and Memory Efficiency:** Avoiding pre-processing resampling loops simplified the pipeline DAG, eliminating training memory overhead and preventing stateful dependencies during deployment.
-
----
-
-### 2. Selection of Random Forest for Production Deployment
-Despite competing against gradient boosting algorithms (CatBoost, LightGBM, AdaBoost), **Random Forest** was selected as the final production engine due to structural and operational advantages:
-
-* **Robustness to High-Dimensional PCA Noise:** Random Forest applies random feature subspace sampling at every split. In a dataset where features $V_1$ through $V_28$ are orthogonal PCA components, this prevents dominant features from overshadowing subtle signal combinations in lower-variance components.
-* **Low Generalization Variance:** As a bagging architecture, Random Forest averages independent decision trees, yielding significantly lower variance and greater resistance to extreme financial outliers than iterative boosting algorithms (e.g., LightGBM, which suffered from severe CV fold variance with a Mean PR-AUC of `0.4473`).
-* **Superior Cross-Validation Stability:** Random Forest demonstrated the highest and most consistent cross-validation score (**5-Fold Mean PR-AUC: 0.8311** across folds: `0.8383`, `0.8555`, `0.7638`, `0.8494`, `0.8486`), translating directly to robust performance on the holdout set (`0.7965`).
-
----
-
-### 3. $F_2$-Score Optimization over Traditional $F_1$-Score Thresholding
-Standard binary classifiers default to a $\tau = 0.50$ decision threshold, optimizing for Accuracy or $F_1$-Score. In financial fraud microservices, this introduces a severe misaligned cost structure:
-
-$$\text{Cost of False Negative (Missed Fraud)} \ggg \text{Cost of False Positive (False Alarm)}$$
-
-* **Asymmetric Financial Risk:** A **False Negative** results in unrecovered financial theft, chargebacks, and regulatory risk. A **False Positive** triggers a minor automated flag or step-up authentication.
-* **Mathematical Weighting ($F_2$-Metric):** The $F_2$-Score places **twice as much emphasis on Recall as Precision**:
-  $$F_2 = 5 \cdot \frac{\text{Precision} \cdot \text{Recall}}{(4 \cdot \text{Precision}) + \text{Recall}}$$
-* **Empirical Optimization Impact:** Tuning the decision boundary down to **$\tau = 0.3274$** shifted the performance footprint dramatically:
-  * **$F_1$ Threshold ($\tau = 0.5444$):** Precision `0.93`, Recall `0.74` $\rightarrow$ **25 Missed Frauds** (70 Caught).
-  * **$F_2$ Threshold ($\tau = 0.3274$):** Precision `0.81`, Recall `0.79` $\rightarrow$ **20 Missed Frauds** (75 Caught).
-  * **Result:** Caught **5 additional fraudulent transactions** (+7.1% fraud recovery) on the holdout test set with only 18 false alarms across $56,651$ legitimate transactions ($0.03\%$ false positive rate).
-
----
-
-### 4. Cyclical Temporal Feature Engineering
-Transaction datasets often include raw time deltas (seconds elapsed since the first recorded transaction). Feeding raw linear time into decision trees creates arbitrary splitting thresholds that fail to generalize to future operational days.
-
-* **Sine/Cosine Transformation:** The continuous `Time` feature was transformed into cyclical diurnal features using periodic trigonometric functions ($24$-hour cycle = $86,400$ seconds):
-  $$\text{Time}_{\sin} = \sin\left(\frac{2\pi \cdot \text{Time}}{86400}\right), \quad \text{Time}_{\cos} = \cos\left(\frac{2\pi \cdot \text{Time}}{86400}\right)$$
-* **Production Rationale:** This maps $23:59$ ($86,340\text{s}$) and $00:01$ ($60\text{s}$) as adjacent points in continuous vector space, allowing the Random Forest model to capture late-night fraud spikes without temporal boundary discontinuities.
-
-## Deployment and Containerization (Docker + FastAPI)
-The production pipeline is packaged using multi-stage Docker builds to guarantee runtime parity across environments and keep image footprints minimal.
-
-###1. Build and Launch via Docker Compose
-```bash
-docker compose up --build -d
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
 ```
 
-###2. Monitor Container Status & Health
-```bash
-docker compose ps
+If PowerShell blocks virtual-environment activation, follow your local Python/PowerShell policy or run the environment's Python executable directly. Do not install project dependencies into a different interpreter from the one used to run tests.
+
+The Docker image installs the pinned packages from `requirements-runtime.txt` and installs the project wheel built from `pyproject.toml`.
+
+## Configuration
+
+`config.yaml` centralizes paths and training parameters. The path settings follow this contract:
+
+- `raw_data`: path to the source CSV.
+- `processed_dir`: directory for generated train/test CSVs and the preprocessing scaler artifact.
+- `models_dir`: directory for the trained model bundle.
+- `model_filename`: filename of the saved model bundle, for example `random_forest_f2.joblib`.
+- `scaler_filename`: filename of the preprocessing scaler artifact, for example `robust_scaler.joblib`.
+
+Directory paths and filenames have separate roles: `model_filename` and `scaler_filename` are filenames, not full paths. Relative directory paths are resolved from the project root. In Docker, `CREDIT_FRAUD_PROJECT_ROOT` is set to `/app`.
+
+Training parameters such as the train/test split size, random seed, Random Forest settings and class weighting are also configured in `config.yaml`. Review that file before running a new experiment.
+
+## Prepare data and train the model
+
+Run these commands from the repository root, with the development environment activated and the dataset in the configured location.
+
+### 1. Prepare the data
+
+```powershell
+python -m src.data_prep
 ```
 
-## API Inference Quickstart (PowerShell)
-Send a transaction payload to receive real-time fraud probability scoring and decision flags:
+The preparation pipeline:
 
-```text
-$body = @{
-    Time = 86400.0
-    Amount = 149.99
-    V1 = -1.359807
-    V2 = -0.072781
-    V3 = 2.536347
-    V4 = 1.378155
-    V5 = -0.338321
-    V6 = 0.462388
-    V7 = 0.239599
-    V8 = 0.098698
-    V9 = 0.363787
-    V10 = 0.090794
-    V11 = -0.551600
-    V12 = -0.617801
-    V13 = -0.991390
-    V14 = -0.311169
-    V15 = 1.468177
-    V16 = -0.470401
-    V17 = 0.207971
-    V18 = 0.025791
-    V19 = 0.403993
-    V20 = 0.251412
-    V21 = -0.018307
-    V22 = 0.277838
-    V23 = -0.110474
-    V24 = 0.066928
-    V25 = 0.128539
-    V26 = -0.189115
-    V27 = 0.133558
-    V28 = -0.021053
-}| ConvertTo-Json
+1. Loads the configured CSV and removes duplicate rows.
+2. Separates `Class` from the input features.
+3. Makes a stratified train/test split using the configured split size and random seed.
+4. Creates `hour_sin` and `hour_cos` by mapping the dataset's elapsed-seconds `Time` feature onto an assumed 86,400-second cycle, then removes the raw `Time` column.
+5. Fits `RobustScaler` on the training split's `Amount` column only, transforms the test split with that same fitted scaler, and names the scaled feature `scaled_amount`.
+6. Writes `X_train.csv`, `X_test.csv`, `y_train.csv`, `y_test.csv`, and the fitted scaler to the configured processed directory.
 
-Invoke-RestMethod -Uri "http://localhost:8000/predict" -Method Post -Body $body -ContentType "application/json"
+### 2. Train and evaluate
+
+```powershell
+python -m src.train
 ```
-## Sample Response:
-```text
+
+Training uses stratified cross-validation to generate out-of-fold probabilities and select an F2 threshold. The final Random Forest is then fitted on the training split and evaluated on the held-out test split using PR-AUC and classification metrics. The resulting bundle is saved to the configured models directory.
+
+The inference service expects the model bundle to contain the estimator, fitted `RobustScaler`, decision threshold, and expected feature names. It validates this schema when initializing instead of silently accepting an incomplete or incompatible bundle.
+
+## Run the API locally
+
+After the model bundle has been created at the configured location:
+
+```powershell
+python -m uvicorn src.main:app --host 127.0.0.1 --port 8000
+```
+
+FastAPI interactive documentation is available at `http://127.0.0.1:8000/docs` while the server is running.
+
+### Health and readiness endpoints
+
+| Method and path | Purpose | Expected behavior |
+|---|---|---|
+| `GET /health` | Liveness: confirms the API process can respond | HTTP `200`, with `status: "ok"` |
+| `GET /ready` | Readiness: confirms the predictor is available | HTTP `200`, with `status: "ready"`; HTTP `503` if the predictor is unavailable |
+| `POST /predict` | Scores a transaction | Returns the prediction fields or a request-validation error |
+
+The Docker health check calls `/ready`, so a live process that cannot provide predictions is not marked ready.
+
+### Prediction request
+
+The request must include `Time`, `Amount`, and every feature from `V1` to `V28`. Missing fields, extra fields, and non-finite numeric values are rejected by request validation.
+
+Example PowerShell request using synthetic input (all PCA features set to zero):
+
+```powershell
+$transaction = @{ Time = 86400.0; Amount = 149.99 }
+1..28 | ForEach-Object { $transaction["V$_"] = 0.0 }
+$body = $transaction | ConvertTo-Json
+
+Invoke-RestMethod `
+    -Uri "http://127.0.0.1:8000/predict" `
+    -Method Post `
+    -ContentType "application/json" `
+    -Body $body
+```
+
+A successful response has this shape:
+
+```json
 {
-"status": "success",
-  "data": {
-    "is_fraud": false,
-    "fraud_probability": 0.0234,
-    "decision_threshold": 0.3200
-  }
-} 
+  "is_fraud": false,
+  "fraud_probability": 0.0002,
+  "decision_threshold": 0.3222897592150029,
+  "status": "APPROVED_LEGIT"
+}
 ```
+
+The numeric values above illustrate a previously verified synthetic smoke test; predictions and the selected threshold depend on the model bundle in use. They are not a performance claim. The `status` field is `FLAGGED_FRAUD` when the estimated fraud probability meets or exceeds the bundle's threshold, otherwise `APPROVED_LEGIT`.
+
+## Run with Docker
+
+Build the image from the repository root:
+
+```powershell
+docker build -t credit-fraud-api:dev .
+```
+
+Start the service on port 8000:
+
+```powershell
+docker run --rm --name credit-fraud-api -p 8000:8000 credit-fraud-api:dev
+```
+
+If port 8000 is already in use on the host, map a different host port, for example `-p 8001:8000`, and use that host port in the URLs below.
+
+Verify readiness and the Docker health status from another PowerShell window:
+
+```powershell
+Invoke-RestMethod http://localhost:8000/ready
+docker inspect --format='{{.State.Health.Status}}' credit-fraud-api
+```
+
+The readiness response should report `ready`, and Docker's health status should become `healthy` after a successful health-check interval. The image uses a multi-stage build, a non-root runtime user, pinned runtime dependencies, and one Uvicorn worker. The trained model bundle and `config.yaml` are copied into the runtime image; the raw dataset is not needed for inference.
+
+To stop the foreground container, press `Ctrl+C`. To stop a detached container, run `docker stop <container-name>`.
+
+## Tests
+
+Run the complete test suite from the repository root:
+
+```powershell
+python -m pytest -q
+```
+
+The tests cover data preparation, preprocessing and inference behavior, API request validation, liveness/readiness behavior, and rejection of an incomplete model bundle. Rerun the suite after code, configuration, dependency, or model-bundle changes.
+
+## Modeling and engineering decisions
+
+- **Stratified split:** keeps the rare fraud class represented in both training and holdout data.
+- **Train-only scaling:** the `RobustScaler` is fitted only on training `Amount` values to avoid leaking holdout information into preprocessing.
+- **Cyclical time features:** sine/cosine encoding represents proximity around the 24-hour boundary more naturally than a raw linear time value.
+- **Class weighting rather than synthetic oversampling:** the Random Forest uses `balanced_subsample`. This avoids generating synthetic records, but it is a modeling choice to validate against alternative imbalance strategies during future experiments.
+- **F2 threshold selection:** F2 places greater emphasis on recall than precision, reflecting a preference to reduce missed fraud cases while still tracking false alarms. It does not remove the need to examine the operational cost of false positives.
+- **PR-AUC for evaluation:** precision-recall evaluation is informative for a highly imbalanced target. Threshold-dependent precision, recall, confusion matrices and false-positive counts should also be reviewed.
+- **Single model bundle:** the estimator, fitted scaler, feature schema and threshold travel together, reducing the risk that inference loads mismatched artifacts.
+
+Performance values depend on the exact dataset, training configuration, dependency versions and saved model artifact. No fixed benchmark figures are reported here because they can become stale when any of those inputs change. Use the latest training output and the saved bundle's `holdout_pr_auc` when publishing results, and report it alongside threshold-dependent metrics such as precision, recall and confusion-matrix counts.
+
+## Limitations and responsible use
+
+- This is a portfolio/demo system using historical transaction data and anonymized PCA features, not a connection to a live card network or bank.
+- A successful API response or a healthy Docker container verifies the service path, not the model's production suitability.
+- The output is a model estimate and threshold-based label. A real payment decision should also consider business policies, customer impact, monitoring, drift, data quality, and human escalation where appropriate.
+- Re-evaluate the model on representative, recent data before any real-world use. Track precision, recall, PR-AUC, false-positive burden, missed fraud, calibration and subgroup behavior where relevant.
+- Treat serialized `joblib` model files as trusted artifacts; do not load model files from untrusted sources.
+- The dataset does not provide actual transaction timestamps. The periodic features derived from `Time` therefore do not recover the true hour of day and the usefulness of this encoding should be validated on representative data.
+
+## License and dataset
+
+This project uses the [Credit Card Fraud Detection dataset hosted on Kaggle](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud). Download the dataset separately and place it at the path configured by `paths.raw_data`. The raw CSV is not included in the repository or Docker image.
+
+Review the dataset provider's terms before reuse or redistribution. A project license has not yet been specified in this repository; add an appropriate `LICENSE` file before granting reuse rights to the project code.
